@@ -1,4 +1,4 @@
-package cl.tradelink.arb.notification.main.utils;
+package cl.vc.arb.notification.main.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

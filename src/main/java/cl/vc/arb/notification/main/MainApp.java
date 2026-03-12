@@ -1,10 +1,10 @@
-package cl.tradelink.arb.notification.main;
+package cl.vc.arb.notification.main;
 
-import cl.tradelink.arb.notification.main.kafka.KafkaAdapterBinary;
-import cl.tradelink.arb.notification.main.kafka.KafkaAdapterString;
-import cl.tradelink.arb.notification.main.kafka.MessageProcessor;
-import cl.tradelink.arb.notification.main.utils.TelegramBot;
-import cl.tradelink.arb.notification.main.utils.TelnetChecker;
+import cl.vc.arb.notification.main.kafka.KafkaAdapterBinary;
+import cl.vc.arb.notification.main.kafka.KafkaAdapterString;
+import cl.vc.arb.notification.main.kafka.MessageProcessor;
+import cl.vc.arb.notification.main.utils.TelegramBot;
+import cl.vc.arb.notification.main.utils.TelnetChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

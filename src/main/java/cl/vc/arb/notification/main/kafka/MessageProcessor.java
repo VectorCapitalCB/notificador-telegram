@@ -1,6 +1,6 @@
-package cl.tradelink.arb.notification.main.kafka;
+package cl.vc.arb.notification.main.kafka;
 
-import cl.tradelink.arb.notification.main.utils.TelegramBot;
+import cl.vc.arb.notification.main.utils.TelegramBot;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

@@ -1,4 +1,4 @@
-package cl.tradelink.arb.notification.main.utils;
+package cl.vc.arb.notification.main.utils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

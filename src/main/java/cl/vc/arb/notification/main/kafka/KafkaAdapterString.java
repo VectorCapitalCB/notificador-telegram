@@ -1,4 +1,4 @@
-package cl.tradelink.arb.notification.main.kafka;
+package cl.vc.arb.notification.main.kafka;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
