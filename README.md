@@ -1,11 +1,10 @@
 # notificador-telegram
 
-Aplicacion Java (Maven) para notificaciones por Telegram, similar a `notification-alert`:
+Aplicacion Java (Maven) para notificaciones por Telegram:
 
 - consume topics Kafka texto y binario,
 - formatea y envia alertas por Telegram,
-- monitorea conectividad telnet por `host:puerto`,
-- permite comandos remotos por Telegram: `start`, `stop`, `status`,
+- permite suscripcion por Telegram con `/start`, `/stop`, `status`,
 - borra mensajes enviados en horario configurado (`horaDelete`).
 
 ## Requisitos
@@ -18,12 +17,16 @@ Aplicacion Java (Maven) para notificaciones por Telegram, similar a `notificatio
 
 Usa como base:
 
-`src/main/resources/config/setup-notification-tl.properties`
+`src/main/resources/setup-notification-tl.properties`
 
 Propiedades minimas:
 
 - `token`
-- `chat`
+
+Propiedades opcionales:
+
+- `chat` como semilla inicial de chats suscritos
+- `telegram.subscribers.file` para persistir suscriptores
 
 ## Build
 
@@ -38,5 +41,5 @@ Genera:
 ## Ejecucion
 
 ```bash
-java -jar target/notification-alert-fat.jar --config src/main/resources/config/setup-notification-tl.properties
+java -jar target/notification-alert-fat.jar --config src/main/resources/setup-notification-tl.properties
 ```

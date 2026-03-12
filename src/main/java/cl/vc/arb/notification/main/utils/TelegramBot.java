@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -13,12 +15,16 @@ import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -34,9 +40,11 @@ public class TelegramBot {
     private static final String TELEGRAM_API = "https://api.telegram.org/bot%s/%s";
 
     private final String token;
-    private final List<String> chats;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    private final Set<String> subscribers = ConcurrentHashMap.newKeySet();
+    private final Path subscribersFile;
+    private final ZoneId purgeZoneId;
 
     private final Map<String, Long> recentMessages = new ConcurrentHashMap<>();
     private final Map<String, List<Integer>> sentMessagesByChat = new ConcurrentHashMap<>();
@@ -48,8 +56,10 @@ public class TelegramBot {
 
     public TelegramBot(String token, List<String> chats, Properties properties) {
         this.token = token;
-        this.chats = List.copyOf(chats);
+        this.subscribersFile = resolveSubscribersFile(properties);
+        this.purgeZoneId = resolvePurgeZone(properties);
         this.dedupWindowMs = Long.parseLong(properties.getProperty("telegram.dedup.window.ms", "20000"));
+        loadSubscribers(chats);
 
         String purgeTime = properties.getProperty("horaDelete", "").trim();
         if (!purgeTime.isEmpty()) {
@@ -74,12 +84,18 @@ public class TelegramBot {
         applySpecialFilters(mensaje);
     }
 
+    public void enviarMensajeInicio() {
+        if (!subscribers.isEmpty()) {
+            sendToAllChats("ok notificador");
+        }
+    }
+
     private void applySpecialFilters(String mensaje) {
         String lower = mensaje.toLowerCase();
         if (lower.contains("logout")) {
-            sendToAllChats("🚨⚠️ ALERTA LOGOUT\n\n" + mensaje);
+            sendToAllChats("ALERTA LOGOUT\n\n" + mensaje);
         } else if (lower.matches(".*[1-5]\\s*dias.*")) {
-            sendToAllChats("🚨⚠️ Alerta: conexion FIX critica\n\n" + mensaje);
+            sendToAllChats("Alerta: conexion FIX critica\n\n" + mensaje);
         }
     }
 
@@ -98,7 +114,7 @@ public class TelegramBot {
     }
 
     private void sendToAllChats(String message) {
-        for (String chatId : chats) {
+        for (String chatId : new ArrayList<>(subscribers)) {
             try {
                 Integer messageId = sendMessage(chatId, message);
                 if (messageId != null) {
@@ -165,26 +181,57 @@ public class TelegramBot {
                 }
 
                 String user = message.path("from").path("first_name").asText("unknown");
-                processCommand(text.toLowerCase(), user);
+                String chatId = message.path("chat").path("id").asText("").trim();
+                if (chatId.isBlank()) {
+                    continue;
+                }
+
+                processCommand(text.toLowerCase(), user, chatId);
             }
         } catch (Exception e) {
             log.error("Error al leer mensajes de Telegram", e);
         }
     }
 
-    private void processCommand(String text, String user) {
+    private void processCommand(String text, String user, String chatId) {
         if (text.contains("stop")) {
-            running = false;
-            sendToAllChats("🔴 Usuario " + user + " detuvo el notificador.");
+            boolean removed = subscribers.remove(chatId);
+            sentMessagesByChat.remove(chatId);
+            persistSubscribers();
+            if (removed) {
+                replyToChat(chatId, "Suscripcion desactivada. Ya no recibiras alertas.");
+            } else {
+                replyToChat(chatId, "No estabas suscrito.");
+            }
+            log.info("Chat {} ({}) canceló la suscripcion", chatId, user);
             return;
         }
+
         if (text.contains("start")) {
-            running = true;
-            sendToAllChats("✅ Usuario " + user + " inicio el notificador.");
+            boolean added = subscribers.add(chatId);
+            persistSubscribers();
+            if (added) {
+                replyToChat(chatId, "Suscripcion activada. Recibiras alertas en este chat.");
+            } else {
+                replyToChat(chatId, "Ya estabas suscrito.");
+            }
+            log.info("Chat {} ({}) suscrito", chatId, user);
             return;
         }
+
         if (text.contains("status")) {
-            sendToAllChats("📡 Estado notificador: " + (running ? "ACTIVO" : "DETENIDO"));
+            replyToChat(chatId, "Estado notificador: ACTIVO. Suscriptores registrados: " + subscribers.size());
+            return;
+        }
+
+        replyToChat(chatId, "Comandos disponibles: /start, /stop, status");
+    }
+
+    private void replyToChat(String chatId, String message) {
+        try {
+            sendMessage(chatId, message);
+        } catch (Exception e) {
+            log.error("Error respondiendo comando a chat {}", chatId, e);
         }
     }
 
@@ -201,16 +248,21 @@ public class TelegramBot {
         long periodSec = TimeUnit.DAYS.toSeconds(1);
 
         scheduler.scheduleAtFixedRate(this::purgeStoredMessages, initialDelaySec, periodSec, TimeUnit.SECONDS);
-        log.info("Borrado diario programado {} (delay={}s)", hhmm, initialDelaySec);
+        log.info("Borrado diario programado {} {} (delay={}s)", hhmm, purgeZoneId, initialDelaySec);
     }
 
     private long delayUntil(int hour, int minute) {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime next = LocalDate.now().atTime(LocalTime.of(hour, minute));
+        ZonedDateTime now = ZonedDateTime.now(purgeZoneId);
+        ZonedDateTime next = LocalDate.now(purgeZoneId).atTime(LocalTime.of(hour, minute)).atZone(purgeZoneId);
         if (!next.isAfter(now)) {
             next = next.plusDays(1);
         }
         return ChronoUnit.SECONDS.between(now, next);
+    }
+
+    private ZoneId resolvePurgeZone(Properties properties) {
+        String zone = properties.getProperty("horaDelete.zone", "America/Santiago").trim();
+        return ZoneId.of(zone);
     }
 
     private void purgeStoredMessages() {
@@ -246,6 +298,19 @@ public class TelegramBot {
     }
 
     private String readResponse(HttpURLConnection connection) throws Exception {
+        int code = connection.getResponseCode();
+        if (code >= 400) {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                    connection.getErrorStream(), StandardCharsets.UTF_8))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    sb.append(line);
+                }
+                throw new IOException("Telegram API error " + code + ": " + sb);
+            }
+        }
+
         try (BufferedReader br = new BufferedReader(new InputStreamReader(
                 connection.getInputStream(), StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
@@ -254,6 +319,54 @@ public class TelegramBot {
                 sb.append(line);
             }
             return sb.toString();
+        }
+    }
+
+    private Path resolveSubscribersFile(Properties properties) {
+        String raw = properties.getProperty("telegram.subscribers.file", "telegram-subscribers.txt").trim();
+        return Paths.get(raw).toAbsolutePath().normalize();
+    }
+
+    private void loadSubscribers(List<String> initialChats) {
+        Set<String> loaded = new LinkedHashSet<>();
+
+        if (Files.exists(subscribersFile)) {
+            try {
+                loaded.addAll(Files.readAllLines(subscribersFile, StandardCharsets.UTF_8).stream()
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList());
+            } catch (IOException e) {
+                log.warn("No se pudo leer archivo de suscriptores {}", subscribersFile, e);
+            }
+        }
+
+        for (String chatId : initialChats) {
+            String trimmed = chatId.trim();
+            if (!trimmed.isEmpty()) {
+                loaded.add(trimmed);
+            }
+        }
+
+        subscribers.addAll(loaded);
+        persistSubscribers();
+    }
+
+    private synchronized void persistSubscribers() {
+        try {
+            Path parent = subscribersFile.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+
+            try (BufferedWriter writer = Files.newBufferedWriter(subscribersFile, StandardCharsets.UTF_8)) {
+                for (String chatId : new LinkedHashSet<>(subscribers)) {
+                    writer.write(chatId);
+                    writer.newLine();
+                }
+            }
+        } catch (IOException e) {
+            log.error("No se pudo persistir archivo de suscriptores {}", subscribersFile, e);
         }
     }
 

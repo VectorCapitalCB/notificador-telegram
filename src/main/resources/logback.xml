@@ -5,7 +5,10 @@
         </encoder>
     </appender>
 
-    <root level="INFO">
+    <logger name="org.apache.kafka" level="ERROR"/>
+    <logger name="cl.vc.arb.notification" level="INFO"/>
+
+    <root level="WARN">
         <appender-ref ref="Console"/>
     </root>
 </configuration>

@@ -4,7 +4,6 @@ import cl.vc.arb.notification.main.kafka.KafkaAdapterBinary;
 import cl.vc.arb.notification.main.kafka.KafkaAdapterString;
 import cl.vc.arb.notification.main.kafka.MessageProcessor;
 import cl.vc.arb.notification.main.utils.TelegramBot;
-import cl.vc.arb.notification.main.utils.TelnetChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,8 +42,8 @@ public final class MainApp {
                     parseCsv(properties.getProperty("chat")),
                     properties
             );
+            telegramBot.enviarMensajeInicio();
 
-            startTelnetChecks();
             startKafkaConsumers();
 
             Runtime.getRuntime().addShutdownHook(new Thread(MainApp::stopAll));
@@ -78,32 +77,9 @@ public final class MainApp {
         }
     }
 
-    private static void startTelnetChecks() {
-        String raw = properties.getProperty("telnet");
-        if ((raw == null || raw.isBlank()) && properties.containsKey("telnet:")) {
-            raw = properties.getProperty("telnet:");
-        }
-
-        if (raw == null || raw.isBlank()) {
-            return;
-        }
-
-        int intervalSec = parseInt(properties.getProperty("telnet.interval.seconds"), 60);
-        int timeoutMs = parseInt(properties.getProperty("telnet.timeout.ms"), 3000);
-
-        for (String endpoint : parseCsv(raw)) {
-            TelnetChecker checker = new TelnetChecker(endpoint, intervalSec, timeoutMs, telegramBot);
-            checker.startTelnetCheck();
-            workers.add(checker);
-        }
-    }
-
     private static void validateRequiredProperties() {
         if (properties.getProperty("token", "").isBlank()) {
             throw new IllegalArgumentException("Falta propiedad requerida: token");
-        }
-        if (properties.getProperty("chat", "").isBlank()) {
-            throw new IllegalArgumentException("Falta propiedad requerida: chat");
         }
     }
 
@@ -127,17 +103,6 @@ public final class MainApp {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
-    }
-
-    private static int parseInt(String value, int fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException ignored) {
-            return fallback;
-        }
     }
 
     private static void stopAll() {

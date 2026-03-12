@@ -69,6 +69,7 @@ public class MessageProcessor {
                     + "🔎 Payload(base64): " + shortBase64;
 
             telegramBot.enviarMensaje(msg);
+
         } catch (Exception e) {
             log.error("Error procesando mensaje binary", e);
         }
