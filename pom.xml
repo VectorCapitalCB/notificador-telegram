@@ -6,13 +6,13 @@
     <groupId>cl.vc.arb</groupId>
     <artifactId>notification.alert</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
     <name>notification alert</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <mainclass>cl.vc.arb.notification.main.MainApp</mainclass>
+        <maven.compiler.release>21</maven.compiler.release>
+        <main.class>cl.vc.arb.notification.main.MainApp</main.class>
     </properties>
 
     <dependencies>
@@ -43,12 +43,15 @@
     </dependencies>
 
     <build>
-        <finalName>notification-alert</finalName>
+        <finalName>notificador-telegram</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.14.1</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -62,12 +65,24 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>${mainclass}</mainClass>
+                                    <mainClass>${main.class}</mainClass>
                                 </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
-                            <finalName>notification-alert-fat</finalName>
+                            <finalName>notificador-telegram-fat</finalName>
                         </configuration>
                     </execution>
                 </executions>
