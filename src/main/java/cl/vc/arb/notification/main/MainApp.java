@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.io.FileInputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.stream.Collectors;
@@ -60,7 +61,7 @@ public final class MainApp {
 
         String textBrokers = properties.getProperty("app.stream.kafka.binder.brokers", "").trim();
         if (!textBrokers.isEmpty()) {
-            for (String topic : parseCsv(properties.getProperty("app.stream.kafka.binder.topics", ""))) {
+            for (String topic : uniqueTopics(properties.getProperty("app.stream.kafka.binder.topics", ""))) {
                 KafkaAdapterString consumer = new KafkaAdapterString(textBrokers, topic, "notification-alert-text", processor);
                 workers.add(consumer);
                 consumer.startConsumer();
@@ -69,7 +70,7 @@ public final class MainApp {
 
         String binaryBrokers = properties.getProperty("app.stream.kafka.binder.brokers.proto", "").trim();
         if (!binaryBrokers.isEmpty()) {
-            for (String topic : parseCsv(properties.getProperty("app.stream.kafka.binder.topics.proto", ""))) {
+            for (String topic : uniqueTopics(properties.getProperty("app.stream.kafka.binder.topics.proto", ""))) {
                 KafkaAdapterBinary consumer = new KafkaAdapterBinary(binaryBrokers, topic, "notification-alert-binary", processor);
                 workers.add(consumer);
                 consumer.startConsumer();
@@ -103,6 +104,10 @@ public final class MainApp {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
+    }
+
+    private static List<String> uniqueTopics(String value) {
+        return new ArrayList<>(new LinkedHashSet<>(parseCsv(value)));
     }
 
     private static void stopAll() {

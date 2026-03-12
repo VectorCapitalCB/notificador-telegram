@@ -4,6 +4,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +30,7 @@ public class KafkaAdapterString extends Thread implements AutoCloseable {
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupPrefix + "-" + UUID.randomUUID());
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
@@ -40,18 +41,27 @@ public class KafkaAdapterString extends Thread implements AutoCloseable {
 
     @Override
     public void run() {
-        consumer.subscribe(List.of(topic));
-        log.info("Kafka string consumer iniciado en topic={}", topic);
-        while (running && !Thread.currentThread().isInterrupted()) {
-            ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
-            for (ConsumerRecord<String, String> record : records) {
-                processor.onStringMessage(topic, record.value());
+        try {
+            consumer.subscribe(List.of(topic));
+            log.info("Kafka string consumer iniciado en topic={}", topic);
+            while (running && !Thread.currentThread().isInterrupted()) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
+                for (ConsumerRecord<String, String> record : records) {
+                    processor.onStringMessage(topic, record.value());
+                }
+                if (!records.isEmpty()) {
+                    consumer.commitAsync();
+                }
             }
-            if (!records.isEmpty()) {
-                consumer.commitAsync();
+        } catch (WakeupException e) {
+            if (running) {
+                log.error("Wakeup inesperado en consumer topic={}", topic, e);
             }
+        } catch (Exception e) {
+            log.error("Error en Kafka string consumer topic={}", topic, e);
+        } finally {
+            log.info("Kafka string consumer detenido topic={}", topic);
         }
-        log.info("Kafka string consumer detenido topic={}", topic);
     }
 
     public void startConsumer() {
@@ -63,6 +73,12 @@ public class KafkaAdapterString extends Thread implements AutoCloseable {
         running = false;
         interrupt();
         consumer.wakeup();
-        consumer.close(Duration.ofSeconds(2));
+        try {
+            join(3000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            consumer.close(Duration.ofSeconds(2));
+        }
     }
 }

@@ -10,7 +10,9 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -45,6 +47,8 @@ public class TelegramBot {
     private final Set<String> subscribers = ConcurrentHashMap.newKeySet();
     private final Path subscribersFile;
     private final ZoneId purgeZoneId;
+    private final int connectTimeoutMs;
+    private final int readTimeoutMs;
 
     private final Map<String, Long> recentMessages = new ConcurrentHashMap<>();
     private final Map<String, List<Integer>> sentMessagesByChat = new ConcurrentHashMap<>();
@@ -59,6 +63,8 @@ public class TelegramBot {
         this.subscribersFile = resolveSubscribersFile(properties);
         this.purgeZoneId = resolvePurgeZone(properties);
         this.dedupWindowMs = Long.parseLong(properties.getProperty("telegram.dedup.window.ms", "20000"));
+        this.connectTimeoutMs = Integer.parseInt(properties.getProperty("telegram.connect.timeout.ms", "5000"));
+        this.readTimeoutMs = Integer.parseInt(properties.getProperty("telegram.read.timeout.ms", "10000"));
         loadSubscribers(chats);
 
         String purgeTime = properties.getProperty("horaDelete", "").trim();
@@ -86,7 +92,7 @@ public class TelegramBot {
 
     public void enviarMensajeInicio() {
         if (!subscribers.isEmpty()) {
-            sendToAllChats("ok notificador");
+            //sendToAllChats("ok notificador");
         }
     }
 
@@ -127,8 +133,7 @@ public class TelegramBot {
     }
 
     private Integer sendMessage(String chatId, String message) throws Exception {
-        URL url = URI.create(String.format(TELEGRAM_API, token, "sendMessage")).toURL();
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        HttpURLConnection connection = openTelegramConnection("sendMessage");
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);
 
@@ -137,57 +142,65 @@ public class TelegramBot {
 
         try (OutputStream os = connection.getOutputStream()) {
             os.write(body.getBytes(StandardCharsets.UTF_8));
-        }
+            String response = readResponse(connection);
+            JsonNode root = mapper.readTree(response);
+            if (!root.path("ok").asBoolean(false)) {
+                log.warn("Telegram devolvio error: {}", response);
+                return null;
+            }
 
-        String response = readResponse(connection);
-        JsonNode root = mapper.readTree(response);
-        if (!root.path("ok").asBoolean(false)) {
-            log.warn("Telegram devolvio error: {}", response);
-            return null;
+            return root.path("result").path("message_id").asInt();
+        } finally {
+            connection.disconnect();
         }
-
-        return root.path("result").path("message_id").asInt();
     }
 
     public void leerMensajes() {
         try {
             URL url = URI.create(String.format(TELEGRAM_API, token, "getUpdates") + "?offset=" + (lastUpdateId + 1)).toURL();
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            configureConnection(connection);
             connection.setRequestMethod("GET");
 
-            String response = readResponse(connection);
-            JsonNode updates = mapper.readTree(response).path("result");
-            if (!updates.isArray()) {
-                return;
+            try {
+                String response = readResponse(connection);
+                JsonNode updates = mapper.readTree(response).path("result");
+                if (!updates.isArray()) {
+                    return;
+                }
+
+                for (JsonNode update : updates) {
+                    long updateId = update.path("update_id").asLong(0L);
+                    if (updateId > 0) {
+                        lastUpdateId = Math.max(lastUpdateId, updateId);
+                    }
+                    if (!seenUpdates.add(updateId)) {
+                        continue;
+                    }
+
+                    JsonNode message = update.path("message");
+                    if (message.isMissingNode()) {
+                        continue;
+                    }
+
+                    String text = message.path("text").asText("").trim();
+                    if (text.isBlank()) {
+                        continue;
+                    }
+
+                    String user = message.path("from").path("first_name").asText("unknown");
+                    String chatId = message.path("chat").path("id").asText("").trim();
+                    if (chatId.isBlank()) {
+                        continue;
+                    }
+
+                    processCommand(text.toLowerCase(), user, chatId);
+                }
+            } finally {
+                connection.disconnect();
             }
-
-            for (JsonNode update : updates) {
-                long updateId = update.path("update_id").asLong(0L);
-                if (updateId > 0) {
-                    lastUpdateId = Math.max(lastUpdateId, updateId);
-                }
-                if (!seenUpdates.add(updateId)) {
-                    continue;
-                }
-
-                JsonNode message = update.path("message");
-                if (message.isMissingNode()) {
-                    continue;
-                }
-
-                String text = message.path("text").asText("").trim();
-                if (text.isBlank()) {
-                    continue;
-                }
-
-                String user = message.path("from").path("first_name").asText("unknown");
-                String chatId = message.path("chat").path("id").asText("").trim();
-                if (chatId.isBlank()) {
-                    continue;
-                }
-
-                processCommand(text.toLowerCase(), user, chatId);
-            }
+        } catch (SocketTimeoutException | ConnectException e) {
+            log.warn("Timeout/conexion fallida consultando Telegram: {}", e.getMessage());
         } catch (Exception e) {
             log.error("Error al leer mensajes de Telegram", e);
         }
@@ -275,9 +288,9 @@ public class TelegramBot {
     }
 
     private void deleteMessage(String chatId, int messageId) {
+        HttpURLConnection connection = null;
         try {
-            URL url = URI.create(String.format(TELEGRAM_API, token, "deleteMessage")).toURL();
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection = openTelegramConnection("deleteMessage");
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
 
@@ -292,9 +305,27 @@ public class TelegramBot {
             if (code != 200) {
                 log.warn("No se pudo borrar mensaje {} del chat {}, http={}", messageId, chatId, code);
             }
+        } catch (SocketTimeoutException | ConnectException e) {
+            log.warn("Timeout/conexion fallida borrando mensaje {} chat {}: {}", messageId, chatId, e.getMessage());
         } catch (Exception e) {
             log.error("Error borrando mensaje {} chat {}", messageId, chatId, e);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
+    }
+
+    private HttpURLConnection openTelegramConnection(String method) throws IOException {
+        URL url = URI.create(String.format(TELEGRAM_API, token, method)).toURL();
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        configureConnection(connection);
+        return connection;
+    }
+
+    private void configureConnection(HttpURLConnection connection) {
+        connection.setConnectTimeout(connectTimeoutMs);
+        connection.setReadTimeout(readTimeoutMs);
     }
 
     private String readResponse(HttpURLConnection connection) throws Exception {

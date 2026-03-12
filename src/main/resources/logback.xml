@@ -1,14 +1,36 @@
 <configuration>
+
     <appender name="Console" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>[%date{ISO8601}] [%level] [%logger{1}] [%thread] - %msg%n</pattern>
+            <pattern>
+                [%highlight(%date{ISO8601})] [%highlight(%level)] [%highlight(%logger{1})] [%highlight(%thread)] - %highlight(%msg) {%mdc}%n
+            </pattern>
         </encoder>
     </appender>
 
-    <logger name="org.apache.kafka" level="ERROR"/>
-    <logger name="cl.vc.arb.notification" level="INFO"/>
+    <appender name="File" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>/usr/local/app/logs/notification-telegram.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>/usr/local/app/logs/notification-telegram.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>
+                [%highlight(%date{ISO8601})] [%highlight(%level)] [%highlight(%logger{1})] [%highlight(%thread)] - %highlight(%msg) {%mdc}%n
+            </pattern>
+        </encoder>
+    </appender>
+
+    <logger name="cl.vc" level="INFO" additivity="false">
+        <appender-ref ref="File" />
+        <appender-ref ref="Console" />
+    </logger>
+
+    <logger name="org.apache.kafka.clients.NetworkClient" level="ERROR" />
 
     <root level="WARN">
-        <appender-ref ref="Console"/>
+        <appender-ref ref="File" />
+        <appender-ref ref="Console" />
     </root>
+
 </configuration>
